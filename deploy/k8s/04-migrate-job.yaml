@@ -1,0 +1,43 @@
+# One-shot schema migration. Runs `alembic upgrade head` once Postgres accepts
+# connections. Re-applying is safe (Alembic is idempotent). Delete + re-apply
+# this Job to run future migrations.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: job-scheduler
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: migrate
+    spec:
+      priorityClassName: system-node-critical
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-postgres
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          command:
+            - python
+            - -c
+            - |
+              import socket, time
+              while True:
+                  try:
+                      socket.create_connection(("postgres", 5432), 3).close()
+                      break
+                  except OSError as e:
+                      print("waiting for postgres:", e); time.sleep(2)
+      containers:
+        - name: migrate
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef: {name: scheduler-config}
+            - secretRef: {name: scheduler-secret}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}

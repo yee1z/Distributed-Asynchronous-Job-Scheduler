@@ -1,0 +1,21 @@
+# Exposes the API through k3s's built-in Traefik ingress. No host rule, so it
+# answers on the node's address at path "/". Add a `host:` if you have DNS.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: job-scheduler
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80

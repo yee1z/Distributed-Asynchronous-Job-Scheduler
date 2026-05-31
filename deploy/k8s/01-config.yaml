@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scheduler-config
+  namespace: job-scheduler
+data:
+  # --- queue / redis ---
+  REDIS_URL: "redis://redis:6379/0"
+  STREAM_KEY: "jobs:stream"
+  CONSUMER_GROUP: "workers"
+  DELAYED_SET_KEY: "jobs:delayed"
+  # --- scheduler ---
+  SCHEDULER_POLL_INTERVAL_SEC: "5"
+  SCHEDULER_LOCK_KEY: "42"
+  ORPHAN_REQUEUE_AFTER_SEC: "60"
+  # --- worker ---
+  WORKER_CONCURRENCY: "10"
+  WORKER_BLOCK_MS: "5000"
+  WORKER_READ_BATCH: "20"
+  CLAIM_MIN_IDLE_MS: "30000"
+  RETRY_BACKOFF_MAX_SEC: "3600"
+  # --- observability / logging ---
+  METRICS_PORT: "9100"
+  LOG_LEVEL: "INFO"
+  # --- postgres bootstrap (non-secret) ---
+  POSTGRES_USER: "scheduler"
+  POSTGRES_DB: "scheduler"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: scheduler-secret
+  namespace: job-scheduler
+type: Opaque
+stringData:
+  # CHANGE ME before any real deployment.
+  POSTGRES_PASSWORD: "scheduler"
+  DATABASE_URL: "postgresql+psycopg://scheduler:scheduler@postgres:5432/scheduler"

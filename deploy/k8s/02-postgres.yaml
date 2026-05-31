@@ -1,0 +1,77 @@
+# PostgreSQL. Single instance; data lives on the NFS-backed hostPath under
+# /work/ks (NOT on "/", which sits at ~100% and would trigger disk-pressure
+# eviction). Recreate strategy guarantees we never run two pods against the
+# same data directory. runAsUser 1000 matches the NFS owner (sysadmin) so the
+# data dir is writable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: job-scheduler
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      priorityClassName: system-node-critical
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef: {name: scheduler-config, key: POSTGRES_USER}
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: {name: scheduler-config, key: POSTGRES_DB}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: scheduler-secret, key: POSTGRES_PASSWORD}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "scheduler"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "scheduler"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 512Mi}
+      volumes:
+        - name: data
+          hostPath:
+            path: /work/ks/data/postgres
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: job-scheduler
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

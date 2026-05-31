@@ -1,0 +1,77 @@
+# FastAPI REST API. Stateless -> 2 replicas for availability.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: job-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      priorityClassName: system-node-critical
+      initContainers:
+        - name: wait-deps
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: {name: scheduler-secret}
+          command:
+            - python
+            - -c
+            - |
+              import os, time, socket, psycopg
+              url = os.environ["DATABASE_URL"].replace("+psycopg", "")
+              while True:
+                  try:
+                      socket.create_connection(("redis", 6379), 3).close()
+                      with psycopg.connect(url, connect_timeout=3) as c:
+                          c.execute("SELECT 1 FROM alembic_version")
+                      break
+                  except Exception as e:
+                      print("waiting for deps/migrations:", e); time.sleep(2)
+      containers:
+        - name: api
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          command:
+            - uvicorn
+            - backend.api.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: {name: scheduler-config}
+            - secretRef: {name: scheduler-secret}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8000}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 384Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: job-scheduler
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 8000
+      name: http

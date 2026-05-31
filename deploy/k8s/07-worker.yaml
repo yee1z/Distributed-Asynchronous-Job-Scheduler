@@ -1,0 +1,74 @@
+# Workers. Scale horizontally by raising replicas; all share one Redis consumer
+# group so work is load-balanced. SIGTERM triggers a graceful drain of in-flight
+# runs (see terminationGracePeriodSeconds).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: job-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: wait-deps
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: {name: scheduler-secret}
+          command:
+            - python
+            - -c
+            - |
+              import os, time, socket, psycopg
+              url = os.environ["DATABASE_URL"].replace("+psycopg", "")
+              while True:
+                  try:
+                      socket.create_connection(("redis", 6379), 3).close()
+                      with psycopg.connect(url, connect_timeout=3) as c:
+                          c.execute("SELECT 1 FROM alembic_version")
+                      break
+                  except Exception as e:
+                      print("waiting for deps/migrations:", e); time.sleep(2)
+      containers:
+        - name: worker
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          command: ["python", "-m", "backend.worker.main"]
+          ports:
+            - containerPort: 9100
+              name: metrics
+          envFrom:
+            - configMapRef: {name: scheduler-config}
+            - secretRef: {name: scheduler-secret}
+          livenessProbe:
+            httpGet: {path: /, port: 9100}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 384Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-metrics
+  namespace: job-scheduler
+  labels:
+    app: worker
+spec:
+  clusterIP: None
+  selector:
+    app: worker
+  ports:
+    - port: 9100
+      targetPort: 9100
+      name: metrics

@@ -1,0 +1,72 @@
+# Scheduler. 2 replicas: one wins the Postgres advisory lock and leads, the
+# other stands by and takes over automatically if the leader dies (failover).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+  namespace: job-scheduler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: scheduler
+  template:
+    metadata:
+      labels:
+        app: scheduler
+    spec:
+      priorityClassName: system-node-critical
+      initContainers:
+        - name: wait-deps
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef: {name: scheduler-secret}
+          command:
+            - python
+            - -c
+            - |
+              import os, time, socket, psycopg
+              url = os.environ["DATABASE_URL"].replace("+psycopg", "")
+              while True:
+                  try:
+                      socket.create_connection(("redis", 6379), 3).close()
+                      with psycopg.connect(url, connect_timeout=3) as c:
+                          c.execute("SELECT 1 FROM alembic_version")
+                      break
+                  except Exception as e:
+                      print("waiting for deps/migrations:", e); time.sleep(2)
+      containers:
+        - name: scheduler
+          image: job-scheduler:0.1.0
+          imagePullPolicy: Never
+          command: ["python", "-m", "backend.scheduler.main"]
+          ports:
+            - containerPort: 9100
+              name: metrics
+          envFrom:
+            - configMapRef: {name: scheduler-config}
+            - secretRef: {name: scheduler-secret}
+          livenessProbe:
+            httpGet: {path: /, port: 9100}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler-metrics
+  namespace: job-scheduler
+  labels:
+    app: scheduler
+spec:
+  clusterIP: None
+  selector:
+    app: scheduler
+  ports:
+    - port: 9100
+      targetPort: 9100
+      name: metrics
