@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests/unit
+
+  integration:
+    name: Integration + failover (docker compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+
+      - name: Start full stack
+        env:
+          CLAIM_MIN_IDLE_MS: "8000"   # shorten the failover reclaim window for CI
+        run: docker compose --profile full up -d --build
+
+      - name: Wait for API readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf localhost:8000/readyz; then echo; echo "API ready"; exit 0; fi
+            sleep 2
+          done
+          echo "API did not become ready in time"; exit 1
+
+      - name: Integration tests (register -> run -> report, retries, deps, schedule)
+        run: pytest tests/integration -m integration
+
+      - name: Resilience — kill a worker mid-run, expect reclaim + completion
+        run: bash tests/resilience/worker_failover_compose.sh
+
+      - name: Dump stack logs on failure
+        if: failure()
+        run: docker compose --profile full logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile full down -v
+
+  manifests:
+    name: Validate k8s manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kustomize
+        run: |
+          VER=5.4.3
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${VER}/kustomize_v${VER}_linux_amd64.tar.gz" | tar xz
+          sudo mv kustomize /usr/local/bin/
+      - name: kustomize build
+        run: kustomize build deploy/k8s > /dev/null && echo "manifests OK"

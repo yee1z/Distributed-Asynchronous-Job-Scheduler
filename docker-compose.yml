@@ -79,6 +79,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://scheduler:scheduler@postgres:5432/scheduler
       REDIS_URL: redis://redis:6379/0
+      # Overridable so CI can shorten the failover reclaim window.
+      CLAIM_MIN_IDLE_MS: ${CLAIM_MIN_IDLE_MS:-30000}
     depends_on:
       postgres:
         condition: service_healthy
