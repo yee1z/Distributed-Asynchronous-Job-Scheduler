@@ -1,0 +1,16 @@
+.git
+.gitignore
+.deps
+tmp
+docs
+deploy
+**/__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+tests
+*.md
+openapi.json
+.venv
+venv
