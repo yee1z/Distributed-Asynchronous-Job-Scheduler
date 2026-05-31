@@ -32,6 +32,16 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build: .
+    image: job-scheduler:dev
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://scheduler:scheduler@postgres:5432/scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build: .
     image: job-scheduler:dev
@@ -45,6 +55,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   scheduler:
     image: job-scheduler:dev
@@ -57,6 +69,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     profiles: ["full"]
 
   worker:
@@ -70,6 +84,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     deploy:
       replicas: 2
     profiles: ["full"]

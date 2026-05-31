@@ -27,6 +27,8 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY backend ./backend
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
 
 # Run as an unprivileged user.
 RUN useradd --create-home --uid 10001 appuser
