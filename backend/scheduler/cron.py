@@ -49,3 +49,26 @@ def next_run_time(
         return after.astimezone(timezone.utc) + timedelta(seconds=seconds)
 
     return None
+
+
+def due_tick(
+    schedule_type: str,
+    schedule_expr: str | None,
+    tz_name: str,
+    base: datetime,
+    now: datetime,
+) -> datetime | None:
+    """Most recent fire time that is due (``<= now``) and strictly after ``base``.
+
+    Returns ``None`` when nothing is due yet. Missed ticks are collapsed to the
+    latest due one, so a schedule that has been idle for a long time fires once
+    on catch-up rather than replaying every interval.
+    """
+    tick = next_run_time(schedule_type, schedule_expr, tz_name, base)
+    if tick is None or tick > now:
+        return None
+    while True:
+        nxt = next_run_time(schedule_type, schedule_expr, tz_name, tick)
+        if nxt is None or nxt > now:
+            return tick
+        tick = nxt

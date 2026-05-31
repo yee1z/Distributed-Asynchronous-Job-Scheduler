@@ -33,7 +33,7 @@ from backend.common.redis_queue import (
     pending_count,
     promote_due_delayed,
 )
-from backend.scheduler.cron import next_run_time
+from backend.scheduler.cron import due_tick
 from backend.scheduler.leader import Leader
 
 logger = get_logger(__name__)
@@ -63,9 +63,12 @@ def schedule_due_jobs(session: Session, now: datetime) -> list[int]:
     ).scalars()
 
     for job in jobs:
-        base = job.last_scheduled_for or now
-        tick = next_run_time(job.schedule_type, job.schedule_expr, job.timezone, base)
-        if tick is None or tick > now:
+        # Anchor on the last tick we scheduled, or the job's creation time the
+        # first time we see it (using ``now`` here would push the next tick
+        # perpetually into the future and the job would never fire).
+        base = job.last_scheduled_for or job.created_at
+        tick = due_tick(job.schedule_type, job.schedule_expr, job.timezone, base, now)
+        if tick is None:
             continue
 
         savepoint = session.begin_nested()
