@@ -45,3 +45,19 @@ docker save job-scheduler:$VER | sudo k3s ctr images import -
 
 manifests 以 `image: job-scheduler:0.1.0` + `imagePullPolicy: Never` 引用。
 詳見 [docs/PROGRESS.md](docs/PROGRESS.md) 階段 D / E。
+
+## 測試
+
+```bash
+pip install -r requirements-dev.txt
+
+# 單元測試（cron / 退避 / schema 驗證，免外部服務）
+pytest tests/unit
+
+# 整合測試（需先啟動完整 stack；未啟動時自動 skip）
+docker compose --profile full up --build      # 另一個終端機
+pytest tests/integration -m integration
+
+# 韌性測試：殺掉 worker pod，驗證 run 仍由其他 worker 接手完成（需 k8s）
+API_BASE=http://<node-ip> ./tests/resilience/worker_failover.sh
+```

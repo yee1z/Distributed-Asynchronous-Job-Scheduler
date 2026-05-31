@@ -9,6 +9,9 @@ readme = "README.md"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-ra -q"
+markers = [
+    "integration: requires a running stack (API + Postgres + Redis), e.g. docker compose --profile full up",
+]
 
 [tool.ruff]
 line-length = 100
