@@ -4,6 +4,9 @@
 # Scratch
 tmp/
 
+# Internal docs / progress notes (not for the published repo)
+docs/
+
 # Python
 __pycache__/
 *.py[cod]

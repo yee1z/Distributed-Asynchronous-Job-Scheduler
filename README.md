@@ -12,12 +12,13 @@
 backend/        後端應用程式碼
   common/       共用：models / schemas / db / redis / config / metrics / logging
   api/          FastAPI REST API（jobs / runs / health）
-  scheduler/    排程派發（規劃中）
-  worker/       執行引擎（規劃中）
+  scheduler/    排程派發：cron/interval 計算、advisory-lock 選主、延遲重試推進
+  worker/       執行引擎：consumer group 消費、failover、idempotent 執行、executors
 deploy/k8s/     k3s 部署 manifests（規劃中）
+migrations/     Alembic 資料庫遷移
 docs/           文件
 Dockerfile          multi-stage build，依賴 baked-in、non-root
-docker-compose.yml  本機完整 stack（含 Postgres / Redis）
+docker-compose.yml  本機完整 stack（含 Postgres / Redis / migrate）
 ```
 
 ## 本機開發（Docker Compose）
