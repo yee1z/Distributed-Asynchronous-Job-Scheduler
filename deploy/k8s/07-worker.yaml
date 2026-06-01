@@ -19,25 +19,40 @@ spec:
       priorityClassName: system-node-critical
       terminationGracePeriodSeconds: 60
       initContainers:
-        - name: wait-deps
-          image: job-scheduler:0.1.0
-          imagePullPolicy: Never
-          envFrom:
-            - secretRef: {name: scheduler-secret}
+        - name: wait-redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
           command:
-            - python
+            - sh
             - -c
             - |
-              import os, time, socket, psycopg
-              url = os.environ["DATABASE_URL"].replace("+psycopg", "")
-              while True:
-                  try:
-                      socket.create_connection(("redis", 6379), 3).close()
-                      with psycopg.connect(url, connect_timeout=3) as c:
-                          c.execute("SELECT 1 FROM alembic_version")
-                      break
-                  except Exception as e:
-                      print("waiting for deps/migrations:", e); time.sleep(2)
+              until redis-cli -h redis ping | grep -q PONG; do
+                echo "waiting for redis"; sleep 2
+              done
+        - name: wait-migrations
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: {name: scheduler-secret, key: POSTGRES_PASSWORD}
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef: {name: scheduler-config, key: POSTGRES_USER}
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef: {name: scheduler-config, key: POSTGRES_DB}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -U "$PGUSER"; do
+                echo "waiting for postgres"; sleep 2
+              done
+              until psql -h postgres -U "$PGUSER" -d "$PGDATABASE" \
+                  -c "SELECT 1 FROM alembic_version" >/dev/null 2>&1; do
+                echo "waiting for migrations"; sleep 2
+              done
       containers:
         - name: worker
           image: job-scheduler:0.1.0

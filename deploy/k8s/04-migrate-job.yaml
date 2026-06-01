@@ -16,20 +16,22 @@ spec:
       priorityClassName: system-node-critical
       restartPolicy: OnFailure
       initContainers:
+        # Use postgres:16-alpine (already running on this node). job-scheduler
+        # image in initContainers hit containerd/NFS CreateContainer stalls.
         - name: wait-postgres
-          image: job-scheduler:0.1.0
-          imagePullPolicy: Never
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: {name: scheduler-secret, key: POSTGRES_PASSWORD}
           command:
-            - python
+            - sh
             - -c
             - |
-              import socket, time
-              while True:
-                  try:
-                      socket.create_connection(("postgres", 5432), 3).close()
-                      break
-                  except OSError as e:
-                      print("waiting for postgres:", e); time.sleep(2)
+              until pg_isready -h postgres -U scheduler; do
+                echo "waiting for postgres"; sleep 2
+              done
       containers:
         - name: migrate
           image: job-scheduler:0.1.0
