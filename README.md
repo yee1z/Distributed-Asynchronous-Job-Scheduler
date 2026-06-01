@@ -14,7 +14,7 @@ backend/        後端應用程式碼
   api/          FastAPI REST API（jobs / runs / health）
   scheduler/    排程派發：cron/interval 計算、advisory-lock 選主、延遲重試推進
   worker/       執行引擎：consumer group 消費、failover、idempotent 執行、executors
-deploy/k8s/     k3s 部署 manifests（規劃中）
+deploy/k8s/     k3s 部署 manifests + deploy-staged.sh（分階段 rollout）
 migrations/     Alembic 資料庫遷移
 docs/           文件
 Dockerfile          multi-stage build，依賴 baked-in、non-root
@@ -39,11 +39,23 @@ k3s 使用 containerd，需把 docker build 的 image 匯入：
 
 ```bash
 VER=0.1.0
-docker build -t job-scheduler:$VER .
+PLATFORM=linux/amd64
+docker buildx build --load --platform "$PLATFORM" --provenance=false --sbom=false -t job-scheduler:$VER .
 docker save job-scheduler:$VER | sudo k3s ctr images import -
 ```
 
-manifests 以 `image: job-scheduler:0.1.0` + `imagePullPolicy: Never` 引用。
+> **為何一定要 `--provenance=false --sbom=false` 並指定單一 `--platform`**：buildx 預設會輸出 OCI image index（manifest list），並額外附帶 attestation / provenance manifest（其 platform 為 `unknown/unknown`）。這種「多 manifest」格式匯入 k3s 後，containerd 的 CRI 在建立容器時解不出可執行的單平台 image，會讓所有使用此 image 的 pod 卡在 `Init:CreateContainerError`。關掉 attestation 並鎖定單一平台，輸出乾淨的單一 manifest，容器才能正常建立。
+
+manifests 以 `image: job-scheduler:0.1.0` + `imagePullPolicy: Never` 引用：
+
+```bash
+kubectl apply -k deploy/k8s
+# 大量 pod 同時建立而卡住時，改用分階段部署：
+./deploy/k8s/deploy-staged.sh
+```
+
+> **為何需要分階段部署（`deploy-staged.sh`）**：一次套用會讓 7 個 pod（api×2 / scheduler×2 / worker×2 + migrate）同時對 containerd 發出 CreateContainer。在 native snapshotter（逐層複製、較慢）下，容易踩到 containerd 的 container name reservation 競態，出現 `failed to reserve container name ... another CreateContainer request is in progress`，使 pod 持續 `Init:CreateContainerError`。`deploy-staged.sh` 先重啟 k3s 清掉卡住的 reservation，再「先 migrate、後依序 api → scheduler → worker（中間留 gap）」逐步部署，藉此避開這個瞬間的 create storm。
+
 詳見 [docs/PROGRESS.md](docs/PROGRESS.md) 階段 D / E。
 
 ## 測試
