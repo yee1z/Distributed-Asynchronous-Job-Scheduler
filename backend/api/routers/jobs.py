@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import redis
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,10 +12,48 @@ from backend.api.deps import get_current_user, get_redis
 from backend.common.constants import TriggerType
 from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
-from backend.common.models import JobRun, JobRunLog, User
-from backend.common.schemas import JobCreate, JobOut, JobRunLogOut, JobRunOut, JobUpdate
+from backend.common.models import Job, JobRun, JobRunLog, User
+from backend.common.schemas import (
+    JobCreate,
+    JobDraftOut,
+    JobOut,
+    JobRecentOut,
+    JobRunLogOut,
+    JobRunOut,
+    JobUpdate,
+)
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+
+
+_MAX_DRAFT_FILE_BYTES = 128 * 1024
+
+
+def _job_name_from_filename(filename: str | None) -> str:
+    stem = Path(filename or "uploaded-task").stem.strip()
+    return stem[:255] or "uploaded-task"
+
+
+def _decode_text_file(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="uploaded file must be UTF-8 text",
+        ) from exc
+
+
+def _draft_from_text(filename: str | None, content: str) -> JobDraftOut:
+    return JobDraftOut(
+        name=_job_name_from_filename(filename),
+        description=f"Draft imported from {filename}" if filename else "Draft imported from text file",
+        category=None,
+        task_type="shell",
+        task_spec={"command": "sh", "args": ["-c", content]},
+        source_filename=filename,
+        file_content=content,
+    )
 
 
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
@@ -41,6 +81,54 @@ def list_jobs(
         session, owner_user_id=current_user.id, enabled=enabled, limit=limit, offset=offset
     )
     return [crud.job_to_dict(session, j) for j in jobs]
+
+
+@router.get("/recent", response_model=list[JobRecentOut])
+def list_recent_jobs(
+    limit: int = Query(default=10, ge=1, le=50),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[JobRecentOut]:
+    jobs = list(
+        session.execute(
+            select(Job)
+            .where(Job.owner_user_id == current_user.id)
+            .order_by(Job.created_at.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    recent: list[JobRecentOut] = []
+    for job in jobs:
+        latest_run = session.execute(
+            select(JobRun)
+            .where(JobRun.job_id == job.id)
+            .order_by(JobRun.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        recent.append(
+            JobRecentOut(
+                job=JobOut.model_validate(crud.job_to_dict(session, job)),
+                latest_run=JobRunOut.model_validate(latest_run) if latest_run is not None else None,
+            )
+        )
+    return recent
+
+
+@router.post("/drafts/from-file", response_model=JobDraftOut)
+async def create_job_draft_from_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+) -> JobDraftOut:
+    # current_user is intentionally required so uploaded scripts are never accepted anonymously.
+    _ = current_user
+    data = await file.read(_MAX_DRAFT_FILE_BYTES + 1)
+    if len(data) > _MAX_DRAFT_FILE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"uploaded file must be <= {_MAX_DRAFT_FILE_BYTES} bytes",
+        )
+    content = _decode_text_file(data)
+    return _draft_from_text(file.filename, content)
 
 
 @router.get("/{job_id}", response_model=JobOut)

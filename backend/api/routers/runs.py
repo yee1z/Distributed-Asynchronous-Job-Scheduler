@@ -11,6 +11,7 @@ from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
 from backend.common.models import Job, JobRun, JobRunLog, User
 from backend.common.schemas import JobRunLogOut, JobRunOut
+from backend.common.redis_queue import publish_cancel
 from backend.worker import store
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -91,6 +92,7 @@ def retry_run(
 def cancel_run(
     run_id: int,
     session: Session = Depends(get_session),
+    client: redis.Redis = Depends(get_redis),
     current_user: User = Depends(get_current_user),
 ) -> JobRun:
     """Best-effort cancellation for queued/pending/running runs."""
@@ -107,6 +109,7 @@ def cancel_run(
             status_code=status.HTTP_409_CONFLICT,
             detail="run could not be canceled",
         )
+    publish_cancel(client, run_id)
     session.expire_all()
     canceled = _get_owned_run(session, run_id, current_user.id)
     if canceled is None:

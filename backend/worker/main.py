@@ -71,6 +71,7 @@ async def run() -> None:
     stream, group = settings.stream_key, settings.consumer_group
     sem = asyncio.Semaphore(settings.worker_concurrency)
     inflight: set[asyncio.Task] = set()
+    inflight_by_run: dict[int, asyncio.Task] = {}
     stop = asyncio.Event()
 
     loop = asyncio.get_running_loop()
@@ -82,12 +83,20 @@ async def run() -> None:
 
     async def handle(message_id: str, run_id: int, *, allow_running: bool) -> None:
         async with sem:
+            task = asyncio.current_task()
+            if task is not None:
+                inflight_by_run[run_id] = task
             INFLIGHT.inc()
             try:
                 await process_run(aredis, run_id, allow_running=allow_running, worker_id=worker_id)
+            except asyncio.CancelledError:
+                logger.info("worker: canceled in-flight run_id=%s", run_id)
+                raise
             except Exception:  # noqa: BLE001
                 logger.exception("worker: unhandled error processing run_id=%s", run_id)
             finally:
+                if task is not None and inflight_by_run.get(run_id) is task:
+                    inflight_by_run.pop(run_id, None)
                 INFLIGHT.dec()
                 # Ack only after reaching a terminal state, then drop from the stream.
                 await _observe_redis("xack", aredis.xack(stream, group, message_id))
@@ -97,6 +106,8 @@ async def run() -> None:
         task = asyncio.create_task(handle(message_id, run_id, allow_running=allow_running))
         inflight.add(task)
         task.add_done_callback(inflight.discard)
+
+    cancel_task = asyncio.create_task(_cancel_listener(aredis, worker_id, inflight_by_run, stop))
 
     while not stop.is_set():
         capacity = settings.worker_concurrency - len(inflight)
@@ -128,11 +139,38 @@ async def run() -> None:
                     continue
                 spawn(message_id, run_id, allow_running=False)
 
+    cancel_task.cancel()
+    await asyncio.gather(cancel_task, return_exceptions=True)
+
     logger.info("worker %s draining %s in-flight run(s)", worker_id, len(inflight))
     if inflight:
         await asyncio.gather(*inflight, return_exceptions=True)
     await aredis.aclose()
     logger.info("worker %s stopped", worker_id)
+
+
+async def _cancel_listener(aredis, worker_id: str, inflight_by_run: dict[int, asyncio.Task], stop: asyncio.Event) -> None:
+    pubsub = aredis.pubsub(ignore_subscribe_messages=True)
+    await _observe_redis("subscribe", pubsub.subscribe(settings.cancel_channel))
+    logger.info("worker %s listening for cancellations on %s", worker_id, settings.cancel_channel)
+    try:
+        while not stop.is_set():
+            message = await pubsub.get_message(timeout=1.0)
+            if not message:
+                continue
+            try:
+                run_id = int(message.get("data"))
+            except (TypeError, ValueError):
+                continue
+            task = inflight_by_run.get(run_id)
+            if task is not None and not task.done():
+                logger.info("worker %s canceling run_id=%s", worker_id, run_id)
+                task.cancel()
+    except asyncio.CancelledError:
+        raise
+    finally:
+        await pubsub.unsubscribe(settings.cancel_channel)
+        await pubsub.aclose()
 
 
 async def _reclaim_stale(aredis, stream, group, worker_id, count, spawn) -> None:

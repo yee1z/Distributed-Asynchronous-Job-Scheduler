@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     consumer_group: str = "workers"
     # Sorted set holding runs that should be (re)enqueued at a future time (retry backoff).
     delayed_set_key: str = "jobs:delayed"
+    cancel_channel: str = "jobs:cancel"
 
     scheduler_poll_interval_sec: float = 5.0
     # Arbitrary but fixed key used for the Postgres advisory lock (leader election).

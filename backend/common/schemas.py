@@ -63,6 +63,11 @@ class JobCreate(JobBase):
     pass
 
 
+class JobDraftOut(JobBase):
+    source_filename: str | None = None
+    file_content: str
+
+
 class JobUpdate(BaseModel):
     description: str | None = None
     category: str | None = Field(default=None, max_length=64)
@@ -116,6 +121,11 @@ class JobRunOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class JobRecentOut(BaseModel):
+    job: JobOut
+    latest_run: JobRunOut | None = None
 
 
 class JobRunLogOut(BaseModel):

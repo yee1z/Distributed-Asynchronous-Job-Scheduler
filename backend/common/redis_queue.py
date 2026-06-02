@@ -80,6 +80,11 @@ def enqueue_run(client: redis.Redis, run_id: int) -> str:
     return message_id
 
 
+def publish_cancel(client: redis.Redis, run_id: int) -> None:
+    with observe_redis_command("publish"):
+        client.publish(_settings.cancel_channel, str(run_id))
+
+
 def schedule_delayed(client: redis.Redis, run_id: int, ready_at_epoch: float) -> None:
     """Register a run to be promoted onto the stream once ``ready_at_epoch`` passes."""
     with observe_redis_command("zadd"):

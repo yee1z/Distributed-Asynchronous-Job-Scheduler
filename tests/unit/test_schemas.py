@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from backend.common.schemas import JobCreate
+from datetime import datetime, timezone
+
+from backend.common.schemas import JobCreate, JobOut, JobRecentOut
 
 
 def test_valid_shell_job():
@@ -64,3 +66,31 @@ def test_http_requires_url():
 def test_shell_requires_command():
     with pytest.raises(ValidationError):
         JobCreate(name="x", task_type="shell", task_spec={})
+
+
+def test_recent_job_schema_allows_missing_latest_run():
+    now = datetime.now(timezone.utc)
+    job = JobOut(
+        id=1,
+        owner_user_id=1,
+        name="recent",
+        description=None,
+        category=None,
+        task_type="shell",
+        task_spec={"command": "echo"},
+        schedule_type="manual",
+        schedule_expr=None,
+        timezone="UTC",
+        enabled=True,
+        max_retries=0,
+        retry_backoff_sec=30,
+        timeout_sec=300,
+        depends_on=[],
+        created_at=now,
+        updated_at=now,
+    )
+
+    recent = JobRecentOut(job=job)
+
+    assert recent.job.name == "recent"
+    assert recent.latest_run is None

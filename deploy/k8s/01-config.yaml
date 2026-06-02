@@ -9,6 +9,7 @@ data:
   STREAM_KEY: "jobs:stream"
   CONSUMER_GROUP: "workers"
   DELAYED_SET_KEY: "jobs:delayed"
+  CANCEL_CHANNEL: "jobs:cancel"
   # --- scheduler ---
   SCHEDULER_POLL_INTERVAL_SEC: "5"
   SCHEDULER_LOCK_KEY: "42"
