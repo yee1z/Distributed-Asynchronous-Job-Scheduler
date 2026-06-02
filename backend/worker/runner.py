@@ -63,6 +63,12 @@ async def process_run(
         result = await executor(
             claimed["task_spec"], timeout_sec=claimed["timeout_sec"], log=logs.write
         )
+    except asyncio.CancelledError:
+        await logs.write("system", "run canceled; stopping executor")
+        await logs.flush()
+        RUN_DURATION.labels(task_type=task_type).observe(time.monotonic() - started)
+        RUNS_PROCESSED.labels(status=RunStatus.CANCELED, task_type=task_type).inc()
+        raise
     except Exception as exc:  # noqa: BLE001 - executor must never crash the worker
         logger.exception("run_id=%s executor crashed", run_id)
         await logs.write("system", f"executor crashed: {exc}")

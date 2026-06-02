@@ -58,8 +58,14 @@ async def execute(spec: dict[str, Any], *, timeout_sec: int, log: LogFn) -> Exec
         return ExecResult.timed_out(
             f"command exceeded timeout of {timeout_sec}s", exit_code=proc.returncode
         )
-    finally:
+    except asyncio.CancelledError:
+        await log("system", "cancellation requested; terminating process")
+        _terminate(proc)
         await asyncio.gather(pumps, return_exceptions=True)
+        raise
+    finally:
+        if not pumps.done():
+            await asyncio.gather(pumps, return_exceptions=True)
 
     code = proc.returncode
     if code == 0:
