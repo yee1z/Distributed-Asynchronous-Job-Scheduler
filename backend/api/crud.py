@@ -45,6 +45,7 @@ def job_to_dict(session: Session, job: Job) -> dict:
         "owner_user_id": job.owner_user_id,
         "name": job.name,
         "description": job.description,
+        "category": job.category,
         "task_type": job.task_type,
         "task_spec": job.task_spec,
         "schedule_type": job.schedule_type,
@@ -73,6 +74,7 @@ def create_job(session: Session, payload: JobCreate, *, owner_user_id: int) -> J
         owner_user_id=owner_user_id,
         name=payload.name,
         description=payload.description,
+        category=payload.category,
         task_type=payload.task_type,
         task_spec=payload.task_spec,
         schedule_type=payload.schedule_type,
@@ -116,6 +118,7 @@ def update_job(session: Session, job: Job, payload: JobUpdate) -> Job:
     merged = {
         "name": job.name,
         "description": job.description,
+        "category": job.category,
         "task_type": job.task_type,
         "task_spec": job.task_spec,
         "schedule_type": job.schedule_type,

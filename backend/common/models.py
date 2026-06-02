@@ -50,6 +50,7 @@ class Job(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     # http | shell | http_async
     task_type: Mapped[str] = mapped_column(String(32), nullable=False)

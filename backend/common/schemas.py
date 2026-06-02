@@ -12,6 +12,7 @@ from backend.common.constants import ScheduleType, TaskType
 class JobBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
+    category: str | None = Field(default=None, max_length=64)
     task_type: str
     task_spec: dict[str, Any] = Field(default_factory=dict)
     schedule_type: str = ScheduleType.MANUAL
@@ -64,6 +65,7 @@ class JobCreate(JobBase):
 
 class JobUpdate(BaseModel):
     description: str | None = None
+    category: str | None = Field(default=None, max_length=64)
     task_type: str | None = None
     task_spec: dict[str, Any] | None = None
     schedule_type: str | None = None
@@ -81,6 +83,7 @@ class JobOut(BaseModel):
     owner_user_id: int | None
     name: str
     description: str | None
+    category: str | None
     task_type: str
     task_spec: dict[str, Any]
     schedule_type: str

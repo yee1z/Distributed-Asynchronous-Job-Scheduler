@@ -81,6 +81,9 @@ async def process_run(
 
 async def _on_success(aredis: aioredis.Redis, claimed: dict, result: ExecResult) -> None:
     run_id, job_id = claimed["run_id"], claimed["job_id"]
+    if await asyncio.to_thread(store.is_run_canceled, run_id):
+        logger.info("run_id=%s was canceled; skipping success side effects", run_id)
+        return
     await asyncio.to_thread(
         store.finish_run, run_id, RunStatus.SUCCEEDED,
         exit_code=result.exit_code, result=result.result,
@@ -98,6 +101,9 @@ async def _on_success(aredis: aioredis.Redis, claimed: dict, result: ExecResult)
 
 async def _on_failure(aredis: aioredis.Redis, claimed: dict, result: ExecResult) -> None:
     run_id, job_id = claimed["run_id"], claimed["job_id"]
+    if await asyncio.to_thread(store.is_run_canceled, run_id):
+        logger.info("run_id=%s was canceled; skipping failure side effects", run_id)
+        return
     attempt, max_retries = claimed["attempt"], claimed["max_retries"]
 
     if result.status in _RETRYABLE and should_retry(attempt, max_retries):

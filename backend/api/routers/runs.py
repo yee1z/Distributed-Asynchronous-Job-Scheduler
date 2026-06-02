@@ -11,6 +11,7 @@ from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
 from backend.common.models import Job, JobRun, JobRunLog, User
 from backend.common.schemas import JobRunLogOut, JobRunOut
+from backend.worker import store
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -84,6 +85,33 @@ def retry_run(
     session.refresh(new_run)
     publish(client, new_run)
     return new_run
+
+
+@router.post("/{run_id}/cancel", response_model=JobRunOut)
+def cancel_run(
+    run_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> JobRun:
+    """Best-effort cancellation for queued/pending/running runs."""
+    run = _get_owned_run(session, run_id, current_user.id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    if run.status in RunStatus.TERMINAL:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"run is already terminal (current: {run.status})",
+        )
+    if not store.cancel_run(run_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="run could not be canceled",
+        )
+    session.expire_all()
+    canceled = _get_owned_run(session, run_id, current_user.id)
+    if canceled is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+    return canceled
 
 
 def _get_owned_run(session: Session, run_id: int, owner_user_id: int) -> JobRun | None:

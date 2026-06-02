@@ -10,8 +10,8 @@ from backend.api.deps import get_current_user, get_redis
 from backend.common.constants import TriggerType
 from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
-from backend.common.models import JobRun, User
-from backend.common.schemas import JobCreate, JobOut, JobRunOut, JobUpdate
+from backend.common.models import JobRun, JobRunLog, User
+from backend.common.schemas import JobCreate, JobOut, JobRunLogOut, JobRunOut, JobUpdate
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -100,6 +100,41 @@ def trigger_job(
     session.refresh(run)
     publish(client, run)
     return run
+
+
+@router.get("/{job_id}/latest-run", response_model=JobRunOut | None)
+def get_latest_job_run(
+    job_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> JobRun | None:
+    job = crud.get_job(session, job_id, owner_user_id=current_user.id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+    return session.execute(
+        select(JobRun).where(JobRun.job_id == job_id).order_by(JobRun.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+
+
+@router.get("/{job_id}/logs", response_model=list[JobRunLogOut])
+def get_latest_job_run_logs(
+    job_id: int,
+    limit: int = Query(default=500, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[JobRunLog]:
+    latest = get_latest_job_run(job_id, session=session, current_user=current_user)
+    if latest is None:
+        return []
+    stmt = (
+        select(JobRunLog)
+        .where(JobRunLog.run_id == latest.id)
+        .order_by(JobRunLog.ts, JobRunLog.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(session.execute(stmt).scalars())
 
 
 @router.get("/{job_id}/runs", response_model=list[JobRunOut])

@@ -72,6 +72,23 @@ def append_logs(run_id: int, entries: list[tuple[str, str]]) -> None:
         session.execute(insert(JobRunLog), rows)
 
 
+def cancel_run(run_id: int) -> bool:
+    with session_scope() as session:
+        result = session.execute(
+            update(JobRun)
+            .where(JobRun.id == run_id, JobRun.status.in_(_ACTIVE))
+            .values(status=RunStatus.CANCELED, finished_at=_now(), error="canceled by user")
+        )
+        return result.rowcount > 0
+
+
+def is_run_canceled(run_id: int) -> bool:
+    with session_scope() as session:
+        return session.execute(
+            select(JobRun.id).where(JobRun.id == run_id, JobRun.status == RunStatus.CANCELED)
+        ).first() is not None
+
+
 def finish_run(
     run_id: int,
     status: str,
@@ -83,7 +100,7 @@ def finish_run(
     with session_scope() as session:
         session.execute(
             update(JobRun)
-            .where(JobRun.id == run_id)
+            .where(JobRun.id == run_id, JobRun.status != RunStatus.CANCELED)
             .values(
                 status=status,
                 finished_at=_now(),
