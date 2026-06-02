@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import time
 
 import redis
 import redis.asyncio as aioredis
 
 from backend.common.config import get_settings
+from backend.common.metrics import (
+    REDIS_COMMAND_DURATION,
+    REDIS_COMMANDS,
+    REDIS_DELAYED_RUNS,
+    REDIS_STREAM_LENGTH,
+    observe_redis_command,
+)
 
 _settings = get_settings()
 
@@ -23,24 +31,41 @@ def get_async_redis() -> aioredis.Redis:
 def ensure_group(client: redis.Redis) -> None:
     """Create the consumer group (idempotent)."""
     try:
-        client.xgroup_create(
-            name=_settings.stream_key,
-            groupname=_settings.consumer_group,
-            id="0",
-            mkstream=True,
-        )
+        with observe_redis_command("xgroup_create"):
+            client.xgroup_create(
+                name=_settings.stream_key,
+                groupname=_settings.consumer_group,
+                id="0",
+                mkstream=True,
+            )
     except redis.ResponseError as exc:
         if "BUSYGROUP" not in str(exc):
             raise
 
 
+async def _observe_async(operation: str, awaitable):
+    start = time.perf_counter()
+    status = "success"
+    try:
+        return await awaitable
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        REDIS_COMMAND_DURATION.labels(operation=operation).observe(time.perf_counter() - start)
+        REDIS_COMMANDS.labels(operation=operation, status=status).inc()
+
+
 async def ensure_group_async(client: aioredis.Redis) -> None:
     try:
-        await client.xgroup_create(
-            name=_settings.stream_key,
-            groupname=_settings.consumer_group,
-            id="0",
-            mkstream=True,
+        await _observe_async(
+            "xgroup_create",
+            client.xgroup_create(
+                name=_settings.stream_key,
+                groupname=_settings.consumer_group,
+                id="0",
+                mkstream=True,
+            ),
         )
     except aioredis.ResponseError as exc:
         if "BUSYGROUP" not in str(exc):
@@ -49,22 +74,30 @@ async def ensure_group_async(client: aioredis.Redis) -> None:
 
 def enqueue_run(client: redis.Redis, run_id: int) -> str:
     """Add a run to the dispatch stream. Returns the stream message id."""
-    return client.xadd(_settings.stream_key, {"run_id": str(run_id)})
+    with observe_redis_command("xadd"):
+        message_id = client.xadd(_settings.stream_key, {"run_id": str(run_id)})
+    update_queue_gauges(client)
+    return message_id
 
 
 def schedule_delayed(client: redis.Redis, run_id: int, ready_at_epoch: float) -> None:
     """Register a run to be promoted onto the stream once ``ready_at_epoch`` passes."""
-    client.zadd(_settings.delayed_set_key, {str(run_id): ready_at_epoch})
+    with observe_redis_command("zadd"):
+        client.zadd(_settings.delayed_set_key, {str(run_id): ready_at_epoch})
+    update_queue_gauges(client)
 
 
 async def enqueue_run_async(client: aioredis.Redis, run_id: int) -> str:
-    return await client.xadd(_settings.stream_key, {"run_id": str(run_id)})
+    message_id = await _observe_async("xadd", client.xadd(_settings.stream_key, {"run_id": str(run_id)}))
+    await update_queue_gauges_async(client)
+    return message_id
 
 
 async def schedule_delayed_async(
     client: aioredis.Redis, run_id: int, ready_at_epoch: float
 ) -> None:
-    await client.zadd(_settings.delayed_set_key, {str(run_id): ready_at_epoch})
+    await _observe_async("zadd", client.zadd(_settings.delayed_set_key, {str(run_id): ready_at_epoch}))
+    await update_queue_gauges_async(client)
 
 
 # Atomically pop every due member from the delayed set and push it onto the stream.
@@ -81,14 +114,41 @@ return #due
 
 def promote_due_delayed(client: redis.Redis, now_epoch: float) -> int:
     """Move all delayed runs whose time has come onto the dispatch stream."""
-    count = client.eval(_PROMOTE_LUA, 2, _settings.delayed_set_key, _settings.stream_key, now_epoch)
+    with observe_redis_command("eval"):
+        count = client.eval(_PROMOTE_LUA, 2, _settings.delayed_set_key, _settings.stream_key, now_epoch)
+    update_queue_gauges(client)
     return int(count)
+
+
+def update_queue_gauges(client: redis.Redis) -> None:
+    try:
+        with observe_redis_command("xlen"):
+            REDIS_STREAM_LENGTH.set(client.xlen(_settings.stream_key))
+    except redis.ResponseError:
+        REDIS_STREAM_LENGTH.set(0)
+    try:
+        with observe_redis_command("zcard"):
+            REDIS_DELAYED_RUNS.set(client.zcard(_settings.delayed_set_key))
+    except redis.ResponseError:
+        REDIS_DELAYED_RUNS.set(0)
+
+
+async def update_queue_gauges_async(client: aioredis.Redis) -> None:
+    try:
+        REDIS_STREAM_LENGTH.set(await _observe_async("xlen", client.xlen(_settings.stream_key)))
+    except aioredis.ResponseError:
+        REDIS_STREAM_LENGTH.set(0)
+    try:
+        REDIS_DELAYED_RUNS.set(await _observe_async("zcard", client.zcard(_settings.delayed_set_key)))
+    except aioredis.ResponseError:
+        REDIS_DELAYED_RUNS.set(0)
 
 
 def pending_count(client: redis.Redis) -> int:
     """Number of delivered-but-unacked messages in the consumer group."""
     try:
-        summary = client.xpending(_settings.stream_key, _settings.consumer_group)
+        with observe_redis_command("xpending"):
+            summary = client.xpending(_settings.stream_key, _settings.consumer_group)
     except redis.ResponseError:
         return 0
     if isinstance(summary, dict):

@@ -18,13 +18,19 @@ import asyncio
 import os
 import signal
 import socket
+import time
 import uuid
 
 from prometheus_client import start_http_server
 
 from backend.common.config import get_settings
 from backend.common.logging import get_logger
-from backend.common.metrics import INFLIGHT, RUNS_RECLAIMED
+from backend.common.metrics import (
+    INFLIGHT,
+    REDIS_COMMAND_DURATION,
+    REDIS_COMMANDS,
+    RUNS_RECLAIMED,
+)
 from backend.common.redis_queue import ensure_group_async, get_async_redis
 from backend.worker.runner import process_run
 
@@ -34,6 +40,19 @@ settings = get_settings()
 
 def _worker_id() -> str:
     return f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+
+
+async def _observe_redis(operation: str, awaitable):
+    start = time.perf_counter()
+    status = "success"
+    try:
+        return await awaitable
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        REDIS_COMMAND_DURATION.labels(operation=operation).observe(time.perf_counter() - start)
+        REDIS_COMMANDS.labels(operation=operation, status=status).inc()
 
 
 def _parse_run_id(fields: dict) -> int | None:
@@ -71,8 +90,8 @@ async def run() -> None:
             finally:
                 INFLIGHT.dec()
                 # Ack only after reaching a terminal state, then drop from the stream.
-                await aredis.xack(stream, group, message_id)
-                await aredis.xdel(stream, message_id)
+                await _observe_redis("xack", aredis.xack(stream, group, message_id))
+                await _observe_redis("xdel", aredis.xdel(stream, message_id))
 
     def spawn(message_id: str, run_id: int, *, allow_running: bool) -> None:
         task = asyncio.create_task(handle(message_id, run_id, allow_running=allow_running))
@@ -89,8 +108,11 @@ async def run() -> None:
         await _reclaim_stale(aredis, stream, group, worker_id, count, spawn)
 
         try:
-            resp = await aredis.xreadgroup(
-                group, worker_id, {stream: ">"}, count=count, block=settings.worker_block_ms
+            resp = await _observe_redis(
+                "xreadgroup",
+                aredis.xreadgroup(
+                    group, worker_id, {stream: ">"}, count=count, block=settings.worker_block_ms
+                ),
             )
         except Exception:  # noqa: BLE001
             logger.exception("worker: xreadgroup failed")
@@ -101,8 +123,8 @@ async def run() -> None:
             for message_id, fields in messages:
                 run_id = _parse_run_id(fields)
                 if run_id is None:
-                    await aredis.xack(stream, group, message_id)
-                    await aredis.xdel(stream, message_id)
+                    await _observe_redis("xack", aredis.xack(stream, group, message_id))
+                    await _observe_redis("xdel", aredis.xdel(stream, message_id))
                     continue
                 spawn(message_id, run_id, allow_running=False)
 
@@ -116,9 +138,12 @@ async def run() -> None:
 async def _reclaim_stale(aredis, stream, group, worker_id, count, spawn) -> None:
     """Reclaim messages abandoned by dead/stalled workers (failover)."""
     try:
-        reply = await aredis.xautoclaim(
-            stream, group, worker_id,
-            min_idle_time=settings.claim_min_idle_ms, start_id="0-0", count=count,
+        reply = await _observe_redis(
+            "xautoclaim",
+            aredis.xautoclaim(
+                stream, group, worker_id,
+                min_idle_time=settings.claim_min_idle_ms, start_id="0-0", count=count,
+            ),
         )
     except Exception:  # noqa: BLE001 - group may not exist yet, or older server
         return
@@ -127,8 +152,8 @@ async def _reclaim_stale(aredis, stream, group, worker_id, count, spawn) -> None
     for message_id, fields in messages:
         run_id = _parse_run_id(fields)
         if run_id is None:
-            await aredis.xack(stream, group, message_id)
-            await aredis.xdel(stream, message_id)
+            await _observe_redis("xack", aredis.xack(stream, group, message_id))
+            await _observe_redis("xdel", aredis.xdel(stream, message_id))
             continue
         RUNS_RECLAIMED.inc()
         logger.info("worker: reclaimed stale message %s (run_id=%s)", message_id, run_id)

@@ -6,6 +6,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS=job-scheduler
 KUBECTL="${KUBECTL:-sudo k3s kubectl}"
+APPLY_EXPORTERS="${APPLY_EXPORTERS:-1}"
+WAIT_EXPORTERS="${WAIT_EXPORTERS:-0}"
+EXPORTER_TIMEOUT="${EXPORTER_TIMEOUT:-120s}"
 
 restart_k3s() {
   echo "==> Restarting k3s (clears stuck containerd name reservations)..."
@@ -143,10 +146,23 @@ sleep 15
 $KUBECTL apply -f "$ROOT/07-worker.yaml"
 $KUBECTL apply -f "$ROOT/08-ingress.yaml"
 
+if [[ "$APPLY_EXPORTERS" == "1" && -f "$ROOT/09-exporters.yaml" ]]; then
+  echo "==> Observability exporters (postgres-exporter + redis-exporter)..."
+  $KUBECTL apply -f "$ROOT/09-exporters.yaml"
+fi
+
 echo "==> Rollout status..."
 $KUBECTL -n "$NS" rollout status deployment/api --timeout=300s
 $KUBECTL -n "$NS" rollout status deployment/scheduler --timeout=300s
 $KUBECTL -n "$NS" rollout status deployment/worker --timeout=300s
+
+if [[ "$APPLY_EXPORTERS" == "1" && "$WAIT_EXPORTERS" == "1" ]]; then
+  echo "==> Exporter rollout status..."
+  $KUBECTL -n "$NS" rollout status deployment/postgres-exporter --timeout="$EXPORTER_TIMEOUT"
+  $KUBECTL -n "$NS" rollout status deployment/redis-exporter --timeout="$EXPORTER_TIMEOUT"
+elif [[ "$APPLY_EXPORTERS" == "1" ]]; then
+  echo "==> Exporters applied; skipping rollout wait (set WAIT_EXPORTERS=1 to wait)."
+fi
 
 echo "==> Done."
 $KUBECTL -n "$NS" get pods -o wide

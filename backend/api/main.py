@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,6 +11,7 @@ from starlette.responses import Response
 
 from backend.api.routers import auth, health, jobs, runs
 from backend.common.logging import configure_logging, get_logger
+from backend.common.metrics import HTTP_INFLIGHT, HTTP_REQUEST_DURATION, HTTP_REQUESTS
 
 logger = get_logger(__name__)
 
@@ -36,6 +39,30 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(jobs.router)
 app.include_router(runs.router)
+
+
+def _route_path(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path or "__unmatched__"
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    method = request.method
+    HTTP_INFLIGHT.inc()
+    start = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        path = _route_path(request)
+        elapsed = time.perf_counter() - start
+        HTTP_REQUEST_DURATION.labels(method=method, path=path).observe(elapsed)
+        HTTP_REQUESTS.labels(method=method, path=path, status_code=str(status_code)).inc()
+        HTTP_INFLIGHT.dec()
 
 
 @app.get("/metrics")

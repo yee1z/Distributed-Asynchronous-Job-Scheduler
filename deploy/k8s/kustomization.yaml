@@ -11,3 +11,4 @@ resources:
   - 06-scheduler.yaml
   - 07-worker.yaml
   - 08-ingress.yaml
+  - 09-exporters.yaml
