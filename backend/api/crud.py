@@ -18,13 +18,15 @@ def _dependency_ids(session: Session, job_id: int) -> list[int]:
     return list(rows)
 
 
-def _validate_dependencies(session: Session, job_id: int | None, depends_on: list[int]) -> None:
+def _validate_dependencies(
+    session: Session, job_id: int | None, owner_user_id: int, depends_on: list[int]
+) -> None:
     unique = set(depends_on)
     if job_id is not None and job_id in unique:
         raise CrudError("a job cannot depend on itself")
     if unique:
         found = session.execute(
-            select(Job.id).where(Job.id.in_(unique))
+            select(Job.id).where(Job.id.in_(unique), Job.owner_user_id == owner_user_id)
         ).scalars().all()
         missing = unique - set(found)
         if missing:
@@ -40,6 +42,7 @@ def _set_dependencies(session: Session, job: Job, depends_on: list[int]) -> None
 def job_to_dict(session: Session, job: Job) -> dict:
     data = {
         "id": job.id,
+        "owner_user_id": job.owner_user_id,
         "name": job.name,
         "description": job.description,
         "task_type": job.task_type,
@@ -58,13 +61,16 @@ def job_to_dict(session: Session, job: Job) -> dict:
     return data
 
 
-def create_job(session: Session, payload: JobCreate) -> Job:
-    existing = session.execute(select(Job).where(Job.name == payload.name)).scalar_one_or_none()
+def create_job(session: Session, payload: JobCreate, *, owner_user_id: int) -> Job:
+    existing = session.execute(
+        select(Job).where(Job.owner_user_id == owner_user_id, Job.name == payload.name)
+    ).scalar_one_or_none()
     if existing is not None:
         raise CrudError(f"job name '{payload.name}' already exists")
-    _validate_dependencies(session, None, payload.depends_on)
+    _validate_dependencies(session, None, owner_user_id, payload.depends_on)
 
     job = Job(
+        owner_user_id=owner_user_id,
         name=payload.name,
         description=payload.description,
         task_type=payload.task_type,
@@ -85,12 +91,16 @@ def create_job(session: Session, payload: JobCreate) -> Job:
     return job
 
 
-def get_job(session: Session, job_id: int) -> Job | None:
-    return session.get(Job, job_id)
+def get_job(session: Session, job_id: int, *, owner_user_id: int) -> Job | None:
+    return session.execute(
+        select(Job).where(Job.id == job_id, Job.owner_user_id == owner_user_id)
+    ).scalar_one_or_none()
 
 
-def list_jobs(session: Session, *, enabled: bool | None, limit: int, offset: int) -> list[Job]:
-    stmt = select(Job).order_by(Job.id)
+def list_jobs(
+    session: Session, *, owner_user_id: int, enabled: bool | None, limit: int, offset: int
+) -> list[Job]:
+    stmt = select(Job).where(Job.owner_user_id == owner_user_id).order_by(Job.id)
     if enabled is not None:
         stmt = stmt.where(Job.enabled == enabled)
     stmt = stmt.limit(limit).offset(offset)
@@ -101,7 +111,7 @@ def update_job(session: Session, job: Job, payload: JobUpdate) -> Job:
     data = payload.model_dump(exclude_unset=True)
     depends_on = data.pop("depends_on", None)
     if depends_on is not None:
-        _validate_dependencies(session, job.id, depends_on)
+        _validate_dependencies(session, job.id, job.owner_user_id, depends_on)
 
     merged = {
         "name": job.name,

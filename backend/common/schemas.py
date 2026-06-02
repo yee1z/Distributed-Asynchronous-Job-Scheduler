@@ -78,6 +78,7 @@ class JobUpdate(BaseModel):
 
 class JobOut(BaseModel):
     id: int
+    owner_user_id: int | None
     name: str
     description: str | None
     task_type: str
@@ -122,3 +123,31 @@ class JobRunLogOut(BaseModel):
     line: str
 
     model_config = {"from_attributes": True}
+
+
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.-]+$")
+    password: str = Field(..., min_length=8, max_length=128)
+    email: str | None = Field(default=None, max_length=255)
+
+
+class UserLogin(BaseModel):
+    username: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: str | None
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: UserOut

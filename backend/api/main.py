@@ -7,7 +7,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.requests import Request
 from starlette.responses import Response
 
-from backend.api.routers import health, jobs, runs
+from backend.api.routers import auth, health, jobs, runs
 from backend.common.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
@@ -33,6 +33,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(jobs.router)
 app.include_router(runs.router)
 

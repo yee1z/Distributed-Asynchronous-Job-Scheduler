@@ -5,11 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.deps import get_redis
+from backend.api.deps import get_current_user, get_redis
 from backend.common.constants import RunStatus, TriggerType
 from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
-from backend.common.models import Job, JobRun, JobRunLog
+from backend.common.models import Job, JobRun, JobRunLog, User
 from backend.common.schemas import JobRunLogOut, JobRunOut
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
@@ -21,8 +21,9 @@ def list_runs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[JobRun]:
-    stmt = select(JobRun)
+    stmt = select(JobRun).join(Job).where(Job.owner_user_id == current_user.id)
     if status_filter is not None:
         stmt = stmt.where(JobRun.status == status_filter)
     stmt = stmt.order_by(JobRun.created_at.desc()).limit(limit).offset(offset)
@@ -30,8 +31,12 @@ def list_runs(
 
 
 @router.get("/{run_id}", response_model=JobRunOut)
-def get_run(run_id: int, session: Session = Depends(get_session)) -> JobRun:
-    run = session.get(JobRun, run_id)
+def get_run(
+    run_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> JobRun:
+    run = _get_owned_run(session, run_id, current_user.id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     return run
@@ -43,8 +48,9 @@ def get_run_logs(
     limit: int = Query(default=500, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[JobRunLog]:
-    run = session.get(JobRun, run_id)
+    run = _get_owned_run(session, run_id, current_user.id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     stmt = (
@@ -62,9 +68,10 @@ def retry_run(
     run_id: int,
     session: Session = Depends(get_session),
     client: redis.Redis = Depends(get_redis),
+    current_user: User = Depends(get_current_user),
 ) -> JobRun:
     """Create a new run that retries a previous (terminal) run of the same job."""
-    run = session.get(JobRun, run_id)
+    run = _get_owned_run(session, run_id, current_user.id)
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     if run.status not in RunStatus.TERMINAL:
@@ -72,12 +79,14 @@ def retry_run(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"run is not in a terminal state (current: {run.status})",
         )
-    job = session.get(Job, run.job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
-
     new_run = create_run(session, run.job_id, TriggerType.RETRY, attempt=run.attempt + 1)
     session.commit()
     session.refresh(new_run)
     publish(client, new_run)
     return new_run
+
+
+def _get_owned_run(session: Session, run_id: int, owner_user_id: int) -> JobRun | None:
+    return session.execute(
+        select(JobRun).join(Job).where(JobRun.id == run_id, Job.owner_user_id == owner_user_id)
+    ).scalar_one_or_none()

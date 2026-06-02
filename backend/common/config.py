@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Port for the Prometheus /metrics endpoint exposed by scheduler/worker processes.
     metrics_port: int = 9100
 
+    auth_secret_key: str = "dev-change-me"
+    auth_token_expire_minutes: int = 1440
+
     log_level: str = "INFO"
 
 

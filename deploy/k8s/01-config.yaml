@@ -36,3 +36,4 @@ stringData:
   # CHANGE ME before any real deployment.
   POSTGRES_PASSWORD: "scheduler"
   DATABASE_URL: "postgresql+psycopg://scheduler:scheduler@postgres:5432/scheduler"
+  AUTH_SECRET_KEY: "change-me-before-real-use"

@@ -6,20 +6,24 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api import crud
-from backend.api.deps import get_redis
+from backend.api.deps import get_current_user, get_redis
 from backend.common.constants import TriggerType
 from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
-from backend.common.models import JobRun
+from backend.common.models import JobRun, User
 from backend.common.schemas import JobCreate, JobOut, JobRunOut, JobUpdate
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
 
 @router.post("", response_model=JobOut, status_code=status.HTTP_201_CREATED)
-def create_job(payload: JobCreate, session: Session = Depends(get_session)) -> dict:
+def create_job(
+    payload: JobCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     try:
-        job = crud.create_job(session, payload)
+        job = crud.create_job(session, payload, owner_user_id=current_user.id)
     except crud.CrudError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return crud.job_to_dict(session, job)
@@ -31,14 +35,21 @@ def list_jobs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[dict]:
-    jobs = crud.list_jobs(session, enabled=enabled, limit=limit, offset=offset)
+    jobs = crud.list_jobs(
+        session, owner_user_id=current_user.id, enabled=enabled, limit=limit, offset=offset
+    )
     return [crud.job_to_dict(session, j) for j in jobs]
 
 
 @router.get("/{job_id}", response_model=JobOut)
-def get_job(job_id: int, session: Session = Depends(get_session)) -> dict:
-    job = crud.get_job(session, job_id)
+def get_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    job = crud.get_job(session, job_id, owner_user_id=current_user.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
     return crud.job_to_dict(session, job)
@@ -46,9 +57,12 @@ def get_job(job_id: int, session: Session = Depends(get_session)) -> dict:
 
 @router.put("/{job_id}", response_model=JobOut)
 def update_job(
-    job_id: int, payload: JobUpdate, session: Session = Depends(get_session)
+    job_id: int,
+    payload: JobUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
-    job = crud.get_job(session, job_id)
+    job = crud.get_job(session, job_id, owner_user_id=current_user.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
     try:
@@ -59,8 +73,12 @@ def update_job(
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_job(job_id: int, session: Session = Depends(get_session)) -> None:
-    job = crud.get_job(session, job_id)
+def delete_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    job = crud.get_job(session, job_id, owner_user_id=current_user.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
     crud.delete_job(session, job)
@@ -71,9 +89,10 @@ def trigger_job(
     job_id: int,
     session: Session = Depends(get_session),
     client: redis.Redis = Depends(get_redis),
+    current_user: User = Depends(get_current_user),
 ) -> JobRun:
     """Manually create and enqueue an immediate run for a job."""
-    job = crud.get_job(session, job_id)
+    job = crud.get_job(session, job_id, owner_user_id=current_user.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
     run = create_run(session, job_id, TriggerType.MANUAL)
@@ -90,8 +109,9 @@ def list_job_runs(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[JobRun]:
-    job = crud.get_job(session, job_id)
+    job = crud.get_job(session, job_id, owner_user_id=current_user.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
     stmt = select(JobRun).where(JobRun.job_id == job_id)

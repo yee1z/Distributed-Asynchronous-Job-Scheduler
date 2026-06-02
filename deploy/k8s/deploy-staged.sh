@@ -44,6 +44,42 @@ reimport_image() {
   }
 }
 
+secret_value() {
+  local key="$1"
+  $KUBECTL -n "$NS" get secret scheduler-secret -o "jsonpath={.data.$key}" 2>/dev/null \
+    | base64 -d 2>/dev/null || true
+}
+
+generate_auth_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  else
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+  fi
+}
+
+ensure_runtime_secret() {
+  local postgres_password="${POSTGRES_PASSWORD:-scheduler}"
+  local database_url="${DATABASE_URL:-postgresql+psycopg://scheduler:scheduler@postgres:5432/scheduler}"
+  local auth_secret="${AUTH_SECRET_KEY:-}"
+
+  if [[ -z "$auth_secret" ]]; then
+    auth_secret="$(secret_value AUTH_SECRET_KEY)"
+  fi
+  if [[ -z "$auth_secret" || "$auth_secret" == "change-me-before-real-use" ]]; then
+    auth_secret="$(generate_auth_secret)"
+    echo "==> Generated AUTH_SECRET_KEY for scheduler-secret."
+  else
+    echo "==> Reusing existing AUTH_SECRET_KEY from scheduler-secret/env."
+  fi
+
+  $KUBECTL -n "$NS" create secret generic scheduler-secret \
+    --from-literal="POSTGRES_PASSWORD=$postgres_password" \
+    --from-literal="DATABASE_URL=$database_url" \
+    --from-literal="AUTH_SECRET_KEY=$auth_secret" \
+    --dry-run=client -o yaml | $KUBECTL apply -f -
+}
+
 dump_migrate_failure() {
   echo "ERROR: migrate job did not complete." >&2
   $KUBECTL -n "$NS" get job migrate -o wide 2>&1 || true
@@ -85,6 +121,7 @@ $KUBECTL -n "$NS" delete job migrate --ignore-not-found
 echo "==> Base stack (namespace/config/postgres/redis)..."
 $KUBECTL apply -f "$ROOT/00-namespace.yaml" -f "$ROOT/01-config.yaml" \
   -f "$ROOT/02-postgres.yaml" -f "$ROOT/03-redis.yaml"
+ensure_runtime_secret
 
 echo "==> Waiting for postgres + redis..."
 $KUBECTL -n "$NS" rollout status deployment/postgres --timeout=300s
