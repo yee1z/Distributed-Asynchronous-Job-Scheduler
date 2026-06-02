@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 import httpx
 import pytest
@@ -17,8 +18,16 @@ def api_base() -> str:
 
 
 @pytest.fixture()
-def client(api_base: str):
+def client(api_base: str, require_stack):
     with httpx.Client(base_url=f"{api_base}/api/v1", timeout=10) as c:
+        username = f"itest-{uuid.uuid4().hex[:12]}"
+        register = c.post(
+            "/auth/register",
+            json={"username": username, "password": "integration-password"},
+        )
+        register.raise_for_status()
+        token = register.json()["access_token"]
+        c.headers.update({"Authorization": f"Bearer {token}"})
         yield c
 
 
