@@ -21,12 +21,13 @@ def create_run(
     *,
     scheduled_for: datetime | None = None,
     attempt: int = 1,
+    status: str = RunStatus.QUEUED,
 ) -> JobRun:
     """Create a queued run row. Caller is responsible for committing."""
     run = JobRun(
         job_id=job_id,
         trigger_type=trigger_type,
-        status=RunStatus.QUEUED,
+        status=status,
         attempt=attempt,
         scheduled_for=scheduled_for,
     )

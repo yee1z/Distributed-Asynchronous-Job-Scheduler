@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 
 from backend.api import crud
 from backend.api.deps import get_current_user, get_redis
-from backend.common.constants import TriggerType
+from backend.common.constants import RunStatus, TriggerType
 from backend.common.db import get_session
 from backend.common.dispatch import create_run, publish
-from backend.common.models import Job, JobRun, JobRunLog, User
+from backend.common.models import Job, JobDependency, JobRun, JobRunLog, User
 from backend.common.schemas import (
     JobCreate,
     JobDraftOut,
@@ -179,15 +179,69 @@ def trigger_job(
     client: redis.Redis = Depends(get_redis),
     current_user: User = Depends(get_current_user),
 ) -> JobRun:
-    """Manually create and enqueue an immediate run for a job."""
+    """Manually trigger a job, queuing unmet dependencies first when needed."""
     job = crud.get_job(session, job_id, owner_user_id=current_user.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
-    run = create_run(session, job_id, TriggerType.MANUAL)
+    runs_to_publish: list[JobRun] = []
+    run = _prepare_trigger_run(session, job_id, TriggerType.MANUAL, runs_to_publish, [])
     session.commit()
     session.refresh(run)
-    publish(client, run)
+    for queued_run in runs_to_publish:
+        publish(client, queued_run)
     return run
+
+
+def _prepare_trigger_run(
+    session: Session,
+    job_id: int,
+    trigger_type: str,
+    runs_to_publish: list[JobRun],
+    stack: list[int],
+) -> JobRun:
+    if job_id in stack:
+        cycle = " -> ".join(str(node) for node in [*stack, job_id])
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"job dependency cycle detected: {cycle}",
+        )
+
+    dependency_ids = _dependency_ids(session, job_id)
+    if not dependency_ids:
+        run = create_run(session, job_id, trigger_type)
+        runs_to_publish.append(run)
+        return run
+
+    for dep_id in dependency_ids:
+        if _active_run(session, dep_id) is None:
+            _prepare_trigger_run(
+                session, dep_id, TriggerType.DEPENDENCY, runs_to_publish, [*stack, job_id]
+            )
+
+    existing = _active_run(session, job_id)
+    if existing is not None:
+        return existing
+    return create_run(session, job_id, trigger_type, status=RunStatus.PENDING)
+
+
+def _dependency_ids(session: Session, job_id: int) -> list[int]:
+    return list(
+        session.execute(
+            select(JobDependency.depends_on_job_id).where(JobDependency.job_id == job_id)
+        ).scalars()
+    )
+
+
+def _active_run(session: Session, job_id: int) -> JobRun | None:
+    return session.execute(
+        select(JobRun)
+        .where(
+            JobRun.job_id == job_id,
+            JobRun.status.in_([RunStatus.PENDING, RunStatus.QUEUED, RunStatus.RUNNING]),
+        )
+        .order_by(JobRun.created_at, JobRun.id)
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 @router.get("/{job_id}/latest-run", response_model=JobRunOut | None)

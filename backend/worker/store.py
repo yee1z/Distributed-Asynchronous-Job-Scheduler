@@ -128,7 +128,9 @@ def dependents_ready(job_id: int) -> list[int]:
     """Jobs that depend on ``job_id`` and are now ready to run.
 
     Ready means: enabled, every one of its dependencies has at least one
-    succeeded run, and it has no run currently active (best-effort de-dupe).
+    succeeded run, and it has no dispatched run currently active
+    (best-effort de-dupe). A pending manual/dependency run is allowed through
+    so it can be promoted once its prerequisites finish.
     """
     ready: list[int] = []
     with session_scope() as session:
@@ -138,9 +140,12 @@ def dependents_ready(job_id: int) -> list[int]:
 
         for dep_job_id in dict.fromkeys(dependent_ids):
             job = session.get(Job, dep_job_id)
-            if job is None or not job.enabled:
+            pending_run = _pending_run(session, dep_job_id)
+            if job is None:
                 continue
-            if _has_active_run(session, dep_job_id):
+            if not job.enabled and pending_run is None:
+                continue
+            if _has_dispatched_run(session, dep_job_id):
                 continue
             if _all_dependencies_succeeded(session, dep_job_id):
                 ready.append(dep_job_id)
@@ -148,10 +153,15 @@ def dependents_ready(job_id: int) -> list[int]:
 
 
 def create_dependency_run(job_id: int) -> int | None:
-    """Create a dependency-triggered run unless one is already active (race guard)."""
+    """Create or promote a dependency-triggered run unless one is already dispatched."""
     with session_scope() as session:
-        if _has_active_run(session, job_id):
+        if _has_dispatched_run(session, job_id):
             return None
+        pending = _pending_run(session, job_id)
+        if pending is not None:
+            pending.status = RunStatus.QUEUED
+            session.flush()
+            return pending.id
         run = JobRun(
             job_id=job_id,
             trigger_type=TriggerType.DEPENDENCY,
@@ -162,10 +172,21 @@ def create_dependency_run(job_id: int) -> int | None:
         return run.id
 
 
-def _has_active_run(session: Session, job_id: int) -> bool:
+def _has_dispatched_run(session: Session, job_id: int) -> bool:
     return session.execute(
-        select(JobRun.id).where(JobRun.job_id == job_id, JobRun.status.in_(_ACTIVE)).limit(1)
+        select(JobRun.id)
+        .where(JobRun.job_id == job_id, JobRun.status.in_([RunStatus.QUEUED, RunStatus.RUNNING]))
+        .limit(1)
     ).first() is not None
+
+
+def _pending_run(session: Session, job_id: int) -> JobRun | None:
+    return session.execute(
+        select(JobRun)
+        .where(JobRun.job_id == job_id, JobRun.status == RunStatus.PENDING)
+        .order_by(JobRun.created_at, JobRun.id)
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 def _all_dependencies_succeeded(session: Session, job_id: int) -> bool:

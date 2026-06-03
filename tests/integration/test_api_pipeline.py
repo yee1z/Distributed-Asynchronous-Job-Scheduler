@@ -127,6 +127,94 @@ def test_dependency_chain(client, require_stack):
     assert _poll(client, dep_run["id"])["status"] == "succeeded"
 
 
+def test_manual_trigger_always_runs_dependencies_first(client, require_stack):
+    upstream = client.post("/jobs", json={
+        "name": _name("it-manual-dag-upstream"), "task_type": "shell",
+        "task_spec": {"command": "echo", "args": ["upstream-first"]},
+    }).json()
+    downstream = client.post("/jobs", json={
+        "name": _name("it-manual-dag-downstream"), "task_type": "shell",
+        "task_spec": {"command": "echo", "args": ["downstream-second"]},
+        "depends_on": [upstream["id"]],
+    }).json()
+
+    first_downstream_run = client.post(f"/jobs/{downstream['id']}/trigger").json()
+    assert first_downstream_run["job_id"] == downstream["id"]
+    assert first_downstream_run["status"] == "pending"
+
+    first_upstream_run = _wait_for_job_run(client, upstream["id"])
+    assert first_upstream_run["trigger_type"] == "dependency"
+    first_upstream_finished = _poll(client, first_upstream_run["id"])
+    assert first_upstream_finished["status"] == "succeeded"
+
+    first_downstream_finished = _poll(client, first_downstream_run["id"])
+    assert first_downstream_finished["status"] == "succeeded"
+    assert first_upstream_finished["finished_at"] <= first_downstream_finished["started_at"]
+
+    second_downstream_run = client.post(f"/jobs/{downstream['id']}/trigger").json()
+    assert second_downstream_run["status"] == "pending"
+
+    upstream_runs = _wait_for_job_runs(client, upstream["id"], 2)
+    second_upstream_run = upstream_runs[0]
+    assert second_upstream_run["id"] != first_upstream_run["id"]
+    second_upstream_finished = _poll(client, second_upstream_run["id"])
+    assert second_upstream_finished["status"] == "succeeded"
+
+    second_downstream_finished = _poll(client, second_downstream_run["id"])
+    assert second_downstream_finished["status"] == "succeeded"
+    assert second_upstream_finished["finished_at"] <= second_downstream_finished["started_at"]
+
+
+def test_manual_trigger_runs_transitive_dependencies_in_order(client, require_stack):
+    c = client.post("/jobs", json={
+        "name": _name("it-dag-c"), "task_type": "shell",
+        "task_spec": {"command": "echo", "args": ["c-first"]},
+    }).json()
+    b = client.post("/jobs", json={
+        "name": _name("it-dag-b-after-c"), "task_type": "shell",
+        "task_spec": {"command": "echo", "args": ["b-second"]},
+        "depends_on": [c["id"]],
+    }).json()
+    a = client.post("/jobs", json={
+        "name": _name("it-dag-a-after-b"), "task_type": "shell",
+        "task_spec": {"command": "echo", "args": ["a-third"]},
+        "depends_on": [b["id"]],
+    }).json()
+
+    run_a = client.post(f"/jobs/{a['id']}/trigger").json()
+    assert run_a["status"] == "pending"
+
+    run_c = _wait_for_job_run(client, c["id"])
+    assert run_c["trigger_type"] == "dependency"
+    finished_c = _poll(client, run_c["id"])
+    assert finished_c["status"] == "succeeded"
+
+    run_b = _wait_for_job_run(client, b["id"])
+    assert run_b["trigger_type"] == "dependency"
+    finished_b = _poll(client, run_b["id"])
+    assert finished_b["status"] == "succeeded"
+
+    finished_a = _poll(client, run_a["id"])
+    assert finished_a["status"] == "succeeded"
+    assert finished_c["finished_at"] <= finished_b["started_at"]
+    assert finished_b["finished_at"] <= finished_a["started_at"]
+
+
+def _wait_for_job_run(client, job_id: int, timeout: float = 15.0) -> dict:
+    return _wait_for_job_runs(client, job_id, 1, timeout)[0]
+
+
+def _wait_for_job_runs(client, job_id: int, count: int, timeout: float = 15.0) -> list[dict]:
+    deadline = time.time() + timeout
+    runs = []
+    while time.time() < deadline:
+        runs = client.get(f"/jobs/{job_id}/runs").json()
+        if len(runs) >= count:
+            return runs
+        time.sleep(0.5)
+    raise AssertionError(f"job {job_id} only produced {len(runs)} run(s), expected {count}")
+
+
 def test_interval_scheduling(client, require_stack):
     job = client.post("/jobs", json={
         "name": _name("it-interval"), "task_type": "shell",
