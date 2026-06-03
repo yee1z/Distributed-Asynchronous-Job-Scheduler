@@ -8,6 +8,33 @@ from backend.worker.executors import shell
 
 
 @pytest.mark.asyncio
+async def test_shell_executor_splits_quoted_command_string():
+    logs: list[tuple[str, str]] = []
+
+    async def log(stream: str, line: str) -> None:
+        logs.append((stream, line))
+
+    result = await shell.execute({"command": "echo \"HI\""}, timeout_sec=5, log=log)
+
+    assert result.succeeded
+    assert ("system", "$ echo HI") in logs
+    assert ("stdout", "HI") in logs
+
+
+@pytest.mark.asyncio
+async def test_shell_executor_appends_args_after_split_command():
+    logs: list[tuple[str, str]] = []
+
+    async def log(stream: str, line: str) -> None:
+        logs.append((stream, line))
+
+    result = await shell.execute({"command": "echo base", "args": ["tail"]}, timeout_sec=5, log=log)
+
+    assert result.succeeded
+    assert ("stdout", "base tail") in logs
+
+
+@pytest.mark.asyncio
 async def test_shell_executor_cancellation_terminates_process_quickly():
     logs: list[tuple[str, str]] = []
 

@@ -287,6 +287,106 @@
         }
       }
     },
+    "/api/v1/jobs/recent": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Recent Jobs",
+        "operationId": "list_recent_jobs_api_v1_jobs_recent_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobRecentOut"
+                  },
+                  "title": "Response List Recent Jobs Api V1 Jobs Recent Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/drafts/from-file": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create Job Draft From File",
+        "operationId": "create_job_draft_from_file_api_v1_jobs_drafts_from_file_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_job_draft_from_file_api_v1_jobs_drafts_from_file_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDraftOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -1011,6 +1111,20 @@
   },
   "components": {
     "schemas": {
+      "Body_create_job_draft_from_file_api_v1_jobs_drafts_from_file_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_create_job_draft_from_file_api_v1_jobs_drafts_from_file_post"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1125,6 +1239,124 @@
           "task_type"
         ],
         "title": "JobCreate"
+      },
+      "JobDraftOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "task_type": {
+            "type": "string",
+            "title": "Task Type"
+          },
+          "task_spec": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Task Spec"
+          },
+          "schedule_type": {
+            "type": "string",
+            "title": "Schedule Type",
+            "default": "manual"
+          },
+          "schedule_expr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Expr"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone",
+            "default": "UTC"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "max_retries": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Retries",
+            "default": 0
+          },
+          "retry_backoff_sec": {
+            "type": "integer",
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Retry Backoff Sec",
+            "default": 30
+          },
+          "timeout_sec": {
+            "type": "integer",
+            "maximum": 86400.0,
+            "minimum": 1.0,
+            "title": "Timeout Sec",
+            "default": 300
+          },
+          "depends_on": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Depends On"
+          },
+          "source_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Filename"
+          },
+          "file_content": {
+            "type": "string",
+            "title": "File Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "task_type",
+          "file_content"
+        ],
+        "title": "JobDraftOut"
       },
       "JobOut": {
         "properties": {
@@ -1251,6 +1483,28 @@
           "updated_at"
         ],
         "title": "JobOut"
+      },
+      "JobRecentOut": {
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/JobOut"
+          },
+          "latest_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobRunOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "job"
+        ],
+        "title": "JobRecentOut"
       },
       "JobRunLogOut": {
         "properties": {
