@@ -32,6 +32,26 @@ def test_create_job_draft_from_uploaded_text_file():
     assert payload["task_spec"] == {"command": "sh", "args": ["-c", "echo hello\n"]}
 
 
+def test_create_job_draft_from_uploaded_python_file():
+    app.dependency_overrides[get_current_user] = lambda: _User()
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/jobs/drafts/from-file",
+            files={"file": ("report.py", b"print('hello')\n", "text/x-python")},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "report"
+    assert payload["source_filename"] == "report.py"
+    assert payload["file_content"] == "print('hello')\n"
+    assert payload["task_type"] == "shell"
+    assert payload["task_spec"] == {"command": "python", "args": ["-c", "print('hello')\n"]}
+
+
 def test_create_job_draft_rejects_binary_file():
     app.dependency_overrides[get_current_user] = lambda: _User()
     try:

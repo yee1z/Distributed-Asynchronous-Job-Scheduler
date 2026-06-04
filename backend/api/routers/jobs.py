@@ -45,12 +45,14 @@ def _decode_text_file(data: bytes) -> str:
 
 
 def _draft_from_text(filename: str | None, content: str) -> JobDraftOut:
+    suffix = Path(filename or "").suffix.lower()
+    command = "python" if suffix == ".py" else "sh"
     return JobDraftOut(
         name=_job_name_from_filename(filename),
         description=f"Draft imported from {filename}" if filename else "Draft imported from text file",
         category=None,
         task_type="shell",
-        task_spec={"command": "sh", "args": ["-c", content]},
+        task_spec={"command": command, "args": ["-c", content]},
         source_filename=filename,
         file_content=content,
     )
