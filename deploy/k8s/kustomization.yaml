@@ -12,3 +12,4 @@ resources:
   - 07-worker.yaml
   - 08-ingress.yaml
   - 09-exporters.yaml
+  - 10-worker-autoscaling.yaml

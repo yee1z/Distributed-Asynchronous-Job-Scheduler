@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS=job-scheduler
 KUBECTL="${KUBECTL:-sudo k3s kubectl}"
 APPLY_EXPORTERS="${APPLY_EXPORTERS:-1}"
+APPLY_AUTOSCALING="${APPLY_AUTOSCALING:-1}"
 WAIT_EXPORTERS="${WAIT_EXPORTERS:-0}"
 EXPORTER_TIMEOUT="${EXPORTER_TIMEOUT:-120s}"
 
@@ -149,6 +150,16 @@ $KUBECTL apply -f "$ROOT/08-ingress.yaml"
 if [[ "$APPLY_EXPORTERS" == "1" && -f "$ROOT/09-exporters.yaml" ]]; then
   echo "==> Observability exporters (postgres-exporter + redis-exporter)..."
   $KUBECTL apply -f "$ROOT/09-exporters.yaml"
+fi
+
+if [[ "$APPLY_AUTOSCALING" == "1" && -f "$ROOT/10-worker-autoscaling.yaml" ]]; then
+  if $KUBECTL get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+    echo "==> Worker autoscaling (KEDA ScaledObject)..."
+    $KUBECTL apply -f "$ROOT/10-worker-autoscaling.yaml"
+  else
+    echo "==> Skipping worker autoscaling: KEDA CRD scaledobjects.keda.sh not installed."
+    echo "    Install KEDA first, then apply $ROOT/10-worker-autoscaling.yaml"
+  fi
 fi
 
 echo "==> Rollout status..."

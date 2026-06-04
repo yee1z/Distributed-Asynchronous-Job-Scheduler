@@ -54,6 +54,44 @@ kubectl apply -k deploy/k8s
 ./deploy/k8s/deploy-staged.sh
 ```
 
+
+### Worker 動態自動伸縮
+
+`worker` 由 KEDA `ScaledObject/worker-autoscaler` 依 Redis Stream 的 job backlog 自動伸縮：
+
+- 最少 `2` pods，保留高可用與基本吞吐。
+- 最多 `20` pods，可依節點容量調整 `deploy/k8s/10-worker-autoscaling.yaml` 的 `maxReplicaCount`。
+- 每 `20` 個 Redis Stream lag / pending entries 約增加 1 個 worker pod；目前 `WORKER_CONCURRENCY=10`，所以 2 pods 約可同時處理 20 個 run。
+- scaler 連續失敗時 fallback 到 `2` pods，避免 autoscaler 指標故障造成 worker 被縮掉。
+- KEDA operator 跑在 `keda` namespace，Redis address 使用 `redis.job-scheduler.svc.cluster.local:6379`。
+
+第一次使用前先安裝 KEDA CRD/controller：
+
+```bash
+kubectl apply --server-side \
+  -f https://github.com/kedacore/keda/releases/download/v2.20.0/keda-2.20.0.yaml
+
+kubectl apply -k deploy/k8s
+```
+
+若用 `deploy-staged.sh`，腳本會在偵測到 `scaledobjects.keda.sh` CRD 時自動套用 autoscaling；尚未安裝 KEDA 時會略過並提示。
+
+緊急手動調整 replica 時，不要直接長期改 `Deployment/worker`，因為 KEDA/HPA 會接手改回來。請先暫停 autoscaling 並指定 replica：
+
+```bash
+kubectl -n job-scheduler annotate scaledobject worker-autoscaler \
+  autoscaling.keda.sh/paused-replicas="6" --overwrite
+
+kubectl -n job-scheduler get deploy worker
+```
+
+解除緊急模式、恢復自動伸縮：
+
+```bash
+kubectl -n job-scheduler annotate scaledobject worker-autoscaler \
+  autoscaling.keda.sh/paused-replicas-
+```
+
 > **為何需要分階段部署（`deploy-staged.sh`）**：一次套用會讓 7 個 pod（api×2 / scheduler×2 / worker×2 + migrate）同時對 containerd 發出 CreateContainer。在 native snapshotter（逐層複製、較慢）下，容易踩到 containerd 的 container name reservation 競態，出現 `failed to reserve container name ... another CreateContainer request is in progress`，使 pod 持續 `Init:CreateContainerError`。`deploy-staged.sh` 先重啟 k3s 清掉卡住的 reservation，再「先 migrate、後依序 api → scheduler → worker（中間留 gap）」逐步部署，藉此避開這個瞬間的 create storm。
 
 詳見 [docs/PROGRESS.md](docs/PROGRESS.md) 階段 D / E。
