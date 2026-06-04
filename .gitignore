@@ -15,6 +15,12 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Virtualenvs
 .venv/
 venv/
