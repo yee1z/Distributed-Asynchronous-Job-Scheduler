@@ -35,6 +35,29 @@ async def test_shell_executor_appends_args_after_split_command():
 
 
 @pytest.mark.asyncio
+async def test_shell_executor_materializes_uploaded_python_script():
+    logs: list[tuple[str, str]] = []
+
+    async def log(stream: str, line: str) -> None:
+        logs.append((stream, line))
+
+    result = await shell.execute(
+        {
+            "command": "python3",
+            "args": ["beautiful.py"],
+            "source_filename": "beautiful.py",
+            "file_content": "print('beautiful')\n",
+        },
+        timeout_sec=5,
+        log=log,
+    )
+
+    assert result.succeeded
+    assert any(stream == "system" and "beautiful.py" in line for stream, line in logs)
+    assert ("stdout", "beautiful") in logs
+
+
+@pytest.mark.asyncio
 async def test_shell_executor_cancellation_terminates_process_quickly():
     logs: list[tuple[str, str]] = []
 

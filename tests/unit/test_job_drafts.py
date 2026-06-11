@@ -29,7 +29,12 @@ def test_create_job_draft_from_uploaded_text_file():
     assert payload["source_filename"] == "nightly.sh"
     assert payload["file_content"] == "echo hello\n"
     assert payload["task_type"] == "shell"
-    assert payload["task_spec"] == {"command": "sh", "args": ["-c", "echo hello\n"]}
+    assert payload["task_spec"] == {
+        "command": "sh",
+        "args": ["nightly.sh"],
+        "source_filename": "nightly.sh",
+        "file_content": "echo hello\n",
+    }
 
 
 def test_create_job_draft_from_uploaded_python_file():
@@ -49,7 +54,12 @@ def test_create_job_draft_from_uploaded_python_file():
     assert payload["source_filename"] == "report.py"
     assert payload["file_content"] == "print('hello')\n"
     assert payload["task_type"] == "shell"
-    assert payload["task_spec"] == {"command": "python", "args": ["-c", "print('hello')\n"]}
+    assert payload["task_spec"] == {
+        "command": "python",
+        "args": ["report.py"],
+        "source_filename": "report.py",
+        "file_content": "print('hello')\n",
+    }
 
 
 def test_create_job_draft_rejects_binary_file():
