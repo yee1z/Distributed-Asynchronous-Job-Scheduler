@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="640" viewBox="0 0 1120 640" role="img" aria-labelledby="title desc">
+  <title id="title">Distributed Asynchronous Job Scheduler Architecture</title>
+  <desc id="desc">Architecture diagram showing a client calling a FastAPI API, PostgreSQL as the source of truth, Redis Streams as the dispatch queue, a scheduler enqueueing due runs, and a worker pool executing shell, HTTP, and async HTTP tasks.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 14; filter: url(#shadow); }
+      .section { fill: #eef2ff; stroke: #c7d2fe; stroke-width: 1.2; rx: 12; }
+      .node { fill: #ffffff; stroke: #64748b; stroke-width: 1.4; rx: 10; }
+      .primary { fill: #e0f2fe; stroke: #0284c7; }
+      .queue { fill: #fef3c7; stroke: #d97706; }
+      .store { fill: #dcfce7; stroke: #16a34a; }
+      .exec { fill: #fae8ff; stroke: #a21caf; }
+      .title { font: 700 24px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .label { font: 700 17px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .small { font: 500 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .edge { fill: none; stroke: #334155; stroke-width: 2; marker-end: url(#arrow); }
+      .edge-light { fill: none; stroke: #64748b; stroke-width: 1.8; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1120" height="640"/>
+  <rect class="panel" x="32" y="32" width="1056" height="576"/>
+  <text class="title" x="70" y="82">Distributed Asynchronous Job Scheduler</text>
+  <text class="small" x="70" y="108">API, scheduler, and workers share PostgreSQL state while Redis Streams coordinates asynchronous execution.</text>
+
+  <rect class="node primary" x="72" y="262" width="150" height="82"/>
+  <text class="label" x="147" y="298" text-anchor="middle">Client / UI</text>
+  <text class="small" x="147" y="322" text-anchor="middle">REST requests</text>
+
+  <rect class="section" x="282" y="148" width="252" height="310"/>
+  <text class="small" x="308" y="176">Application Services</text>
+
+  <rect class="node primary" x="314" y="210" width="188" height="76"/>
+  <text class="label" x="408" y="244" text-anchor="middle">FastAPI API</text>
+  <text class="small" x="408" y="266" text-anchor="middle">jobs, runs, auth</text>
+
+  <rect class="node primary" x="314" y="326" width="188" height="76"/>
+  <text class="label" x="408" y="360" text-anchor="middle">Scheduler</text>
+  <text class="small" x="408" y="382" text-anchor="middle">cron / interval ticks</text>
+
+  <rect class="section" x="596" y="148" width="232" height="310"/>
+  <text class="small" x="622" y="176">State and Queue</text>
+
+  <rect class="node store" x="626" y="210" width="172" height="76"/>
+  <text class="label" x="712" y="244" text-anchor="middle">PostgreSQL</text>
+  <text class="small" x="712" y="266" text-anchor="middle">source of truth</text>
+
+  <rect class="node queue" x="626" y="326" width="172" height="76"/>
+  <text class="label" x="712" y="360" text-anchor="middle">Redis Streams</text>
+  <text class="small" x="712" y="382" text-anchor="middle">dispatch queue</text>
+
+  <rect class="section" x="878" y="148" width="174" height="310"/>
+  <text class="small" x="904" y="176">Execution</text>
+
+  <rect class="node primary" x="904" y="210" width="122" height="76"/>
+  <text class="label" x="965" y="244" text-anchor="middle">Worker</text>
+  <text class="small" x="965" y="266" text-anchor="middle">pool</text>
+
+  <rect class="node exec" x="888" y="326" width="72" height="52"/>
+  <text class="small" x="924" y="357" text-anchor="middle">Shell</text>
+
+  <rect class="node exec" x="974" y="326" width="62" height="52"/>
+  <text class="small" x="1005" y="357" text-anchor="middle">HTTP</text>
+
+  <rect class="node exec" x="906" y="394" width="112" height="52"/>
+  <text class="small" x="962" y="416" text-anchor="middle">Async HTTP</text>
+  <text class="small" x="962" y="434" text-anchor="middle">Polling</text>
+
+  <path class="edge" d="M 222 303 C 252 303, 276 248, 314 248"/>
+  <text class="small" x="258" y="270">REST</text>
+
+  <path class="edge" d="M 502 248 L 626 248"/>
+  <text class="small" x="544" y="236">persist</text>
+
+  <path class="edge-light" d="M 502 268 C 552 288, 576 346, 626 364"/>
+  <text class="small" x="548" y="332">trigger</text>
+
+  <path class="edge-light" d="M 502 364 C 552 364, 576 364, 626 364"/>
+  <text class="small" x="562" y="384" text-anchor="middle">enqueue due runs</text>
+
+  <path class="edge-light dash" d="M 502 344 C 540 304, 578 248, 626 248"/>
+  <text class="small" x="610" y="300" text-anchor="middle">read schedules</text>
+
+  <path class="edge" d="M 798 364 C 842 364, 858 248, 904 248"/>
+  <text class="small" x="828" y="326">consume</text>
+
+  <path class="edge-light dash" d="M 904 232 C 858 194, 836 194, 798 232"/>
+  <text class="small" x="820" y="202">claim / update</text>
+
+  <path class="edge-light" d="M 944 286 L 930 326"/>
+  <path class="edge-light" d="M 982 286 L 1000 326"/>
+  <path class="edge-light" d="M 965 286 L 965 394"/>
+
+  <text class="small" x="72" y="556">Flow: clients define or trigger jobs; the scheduler enqueues due work; workers claim runs, execute tasks, and write status and logs back to PostgreSQL.</text>
+</svg>
