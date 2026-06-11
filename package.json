@@ -1,0 +1,10 @@
+{
+  "name": "job-scheduler-backend-quality",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "deps": "python3 -m pip install --target .deps --upgrade -r requirements-dev.txt",
+    "test:run": "PYTHONPATH=.deps:. python3 -m pytest tests/unit",
+    "test:coverage": "PYTHONPATH=.deps:. python3 -m pytest tests/unit --junitxml=coverage/junit.xml --cov=backend --cov-report=term-missing --cov-report=xml:coverage/coverage.xml --cov-report=html:coverage/index.html --cov-report=lcov:coverage/lcov.info"
+  }
+}
